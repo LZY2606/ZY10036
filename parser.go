@@ -145,24 +145,15 @@ func (f *Parser) ParseURL(feedURL string) (feed *Feed, err error) {
 // It will be automatically added to the header of the request
 // Request could be canceled or timeout via given context
 func (f *Parser) ParseURLWithContext(feedURL string, ctx context.Context) (feed *Feed, err error) {
-	client := f.httpClient()
-
-	req, err := http.NewRequestWithContext(ctx, "GET", feedURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", f.UserAgent)
-
-	if f.AuthConfig != nil && f.AuthConfig.Username != "" && f.AuthConfig.Password != "" {
-		req.SetBasicAuth(f.AuthConfig.Username, f.AuthConfig.Password)
-	}
-
-	resp, err := client.Do(req)
-
+	req, err := f.newRequest(ctx, feedURL)
 	if err != nil {
 		return nil, err
 	}
 
+	resp, err := f.httpClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
 	if resp != nil {
 		defer func() {
 			if ce := resp.Body.Close(); ce != nil && err == nil {
@@ -173,16 +164,39 @@ func (f *Parser) ParseURLWithContext(feedURL string, ctx context.Context) (feed 
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, HTTPError{
-			StatusCode: resp.StatusCode,
-			Status:     resp.Status,
+		StatusCode: resp.StatusCode,
+		Status:     resp.Status,
 		}
 	}
 
-	if f.MaxByteSize <= 0 {
-		return f.Parse(resp.Body)
+	return f.parseResponseBody(resp.Body)
+}
+
+// newRequest builds a GET request for feedURL carrying the Parser's
+// User-Agent and, when configured, BasicAuth credentials. Conditional
+// headers are added by the caller.
+func (f *Parser) newRequest(ctx context.Context, feedURL string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", feedURL, nil)
+	if err != nil {
+		return nil, err
 	}
-	body := &limitedReader{r: resp.Body, left: f.MaxByteSize}
-	feed, err = f.Parse(body)
+	req.Header.Set("User-Agent", f.UserAgent)
+
+	if f.AuthConfig != nil && f.AuthConfig.Username != "" && f.AuthConfig.Password != "" {
+		req.SetBasicAuth(f.AuthConfig.Username, f.AuthConfig.Password)
+	}
+	return req, nil
+}
+
+// parseResponseBody parses a 2xx response body, enforcing MaxByteSize when
+// configured. Shared by ParseURLWithContext and the conditional fetch entry
+// points so both apply identical size limiting and format detection.
+func (f *Parser) parseResponseBody(respBody io.Reader) (*Feed, error) {
+	if f.MaxByteSize <= 0 {
+		return f.Parse(respBody)
+	}
+	body := &limitedReader{r: respBody, left: f.MaxByteSize}
+	feed, err := f.Parse(body)
 	if body.err == ErrResponseTooLarge {
 		return nil, ErrResponseTooLarge
 	}

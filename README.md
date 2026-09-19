@@ -113,6 +113,35 @@ feed, _ := fp.ParseURL("http://feeds.twit.tv/twit.xml")
 fmt.Println(feed.Title)
 ```
 
+#### Conditional fetching (ETag / Last-Modified)
+
+`ParseURLConditional` sends cache validators from a previous fetch as
+`If-None-Match` / `If-Modified-Since` and reports whether the feed changed,
+so polling loops can skip re-downloading and re-parsing unchanged feeds.
+The parser keeps no cache itself: thread the returned validators (and, if
+your cache is keyed by URL, `FinalURL`, since validators belong to the
+post-redirect URL) into the next call. A runnable version of this example
+lives in `example_conditional_test.go`.
+
+```go
+fp := gofeed.NewParser()
+var opts gofeed.ConditionalOptions // zero value: unconditional first fetch
+var feed *gofeed.Feed
+
+for range time.Tick(time.Hour) {
+	res, err := fp.ParseURLConditional("http://feeds.twit.tv/twit.xml", opts)
+	if err != nil {
+		continue // same error handling as ParseURL (HTTPError, ...)
+	}
+	if res.NotModified {
+		continue // 304: body was not parsed, feed is still current
+	}
+	feed = res.Feed
+	opts = gofeed.ConditionalOptions{ETag: res.ETag, LastModified: res.LastModified}
+	fmt.Println(feed.Title)
+}
+```
+
 ### Feed Specific Parsers
 
 If you have a usage scenario that requires a specialized parser:
