@@ -162,6 +162,43 @@ fp.AuthConfig = &gofeed.Auth{
 }
 ```
 
+#### Conditional Fetching (ETag / Last-Modified)
+
+`ParseURLConditional` revalidates a feed with the HTTP cache validators from
+the previous response instead of downloading it in full on every poll. Pass
+the last `ETag`/`LastModified` in a `ConditionalOptions`; the result reports
+`Unchanged` on a 304 (the feed is not re-parsed) and carries the validators
+to use on the next poll. The parser keeps no cache itself — persist the
+options and the last feed between polls, keyed by the result's `FinalURL`
+(the URL after redirects, whose representation the validators describe).
+Weak ETags are sent back verbatim. The same `ConditionalOptions` value is
+safe to share across concurrent calls.
+
+```go
+fp := gofeed.NewParser()
+var opts *gofeed.ConditionalOptions // nil: first poll is unconditional
+var cached *gofeed.Feed
+
+for range ticker.C {
+	res, err := fp.ParseURLConditional(feedURL, opts)
+	if err != nil {
+		continue // same error handling as ParseURL (HTTPError, ...)
+	}
+	if res.Unchanged {
+		continue // 304: cached is still current
+	}
+	cached = res.Feed
+	opts = &gofeed.ConditionalOptions{
+		ETag:         res.ETag,
+		LastModified: res.LastModified,
+	}
+}
+```
+
+A runnable version of this polling loop is in
+[example_conditional_test.go](example_conditional_test.go); it is executed by
+`go test`.
+
 #### Using Custom Translators for Advanced Parsing
 
 If you need more control over how fields are parsed and prioritized, you can specify your own custom translator. Below is an example that shows how to create a custom translator to give the `/rss/channel/itunes:author` field higher precedence than the `/rss/channel/managingEditor` field in RSS feeds.
